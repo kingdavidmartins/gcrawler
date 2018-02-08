@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"log"
 	"container/list"
+	"sync"
 )
 
 func fetch(url string) (string, error) {
@@ -27,7 +28,7 @@ func parse(text string) ([]string, error) {
 	return outgoing_urls, nil
 }
 
-func process(url string, buff *list.List) {
+func process(url string, buff *list.List, store map[string]string, store_mutex *sync.RWMutex) {
 	log.Printf("processing %s", url)
 	text, err := fetch(url)
 	if err != nil {
@@ -38,6 +39,11 @@ func process(url string, buff *list.List) {
 	if err != nil {
 		log.Fatalf("SH!T GOT REAL ~ Failed to parse body from %s\n", url)
 	}
+
+	// push into store
+	store_mutex.Lock()
+	store[url] = url
+	store_mutex.Unlock()
 
 	for _, u := range outgoing_urls {
 		buff.PushBack(u)
@@ -51,16 +57,19 @@ func pop(lst *list.List) string {
 	return head.Value.(string)
 }
 
-func worker(id int, queue chan string, store map[string]string) {
+func worker(id int, queue chan string, store map[string]string, store_mutex *sync.RWMutex) {
 	internal_buffer := list.New()
 
 	for url := range queue {
+		store_mutex.Lock()
 		if store[url] != "" {
+			store_mutex.Unlock()
 			continue
 		}
+		store_mutex.Unlock()
 
 		log.Printf("worker %d received %s from queue", id, url)
-		process(url, internal_buffer)
+		process(url, internal_buffer, store, store_mutex)
 
 		for {
 			if internal_buffer.Len() == 0 {
@@ -73,14 +82,14 @@ func worker(id int, queue chan string, store map[string]string) {
 			case queue <- next_url: 
 			  // do nothing
 			default: 
-				process(next_url, internal_buffer)
+				process(next_url, internal_buffer, store, store_mutex)
 			}
 		}
 	}
 }
 
-func SpinUpWorkers(num int, queue chan string, store map[string]string) {
+func SpinUpWorkers(num int, queue chan string, store map[string]string, store_mutex *sync.RWMutex) {
 	for id := 0; id < num; id++ {
-		go worker(id, queue, store)
+		go worker(id, queue, store, store_mutex)
 	}
 }
