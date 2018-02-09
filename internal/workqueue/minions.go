@@ -2,11 +2,13 @@ package workqueue
 
 import (
 	"errors"
-	"io/ioutil"
 	"net/http"
 	"log"
 	"container/list"
+	"strings"
 	"sync"
+	"golang.org/x/net/html"
+	"fmt"
 )
 
 func fetch(url string) (string, error) {
@@ -15,12 +17,40 @@ func fetch(url string) (string, error) {
 		return "", errors.New("SH!T GOT REAL ~ Couldn't get url")
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	// close the response body when finished with it
+	defer resp.Body.Close()
+
+	body := resp.Body
+
 	if err != nil {
 		return "", errors.New("SH!T GOT REAL ~ Couldn't read body url")
 	}
 
-	return string(body), nil
+	z := html.NewTokenizer(body)
+
+	for {
+			tt := z.Next()
+	
+			switch {
+			case tt == html.ErrorToken:
+				// End of the document, we're done
+					// return nothing
+			case tt == html.StartTagToken:
+					t := z.Token()
+
+					for _, a := range t.Attr {
+						not_http := strings.Index(a.Val, "http") == 0
+						if !not_http {
+							continue
+						}
+						if a.Key == "href" {
+							fmt.Println(a.Val)
+						}
+					}
+			}
+	}
+
+	// return string(body), nil
 }
 
 func parse(text string) ([]string, error) {
