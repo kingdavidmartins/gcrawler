@@ -2,30 +2,145 @@ package main
 
 import (
 	"fmt"
-	"time"
-	"github.com/kingdavidmartins/gcrawler/internal/workqueue"
-	"sync"
+	"net/http"
+	"os"
+	"strings"
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 )
 
-func main()  {
+type Link struct {
+	url   string
+	text  string
+	depth int
+}
 
-	store := make(map[string]string)
-	store_mutex := &sync.RWMutex{}
-	queue := make(chan string)
+type HttpError struct {
+	original string
+}
 
-	workqueue.SpinUpWorkers(10, queue, store, store_mutex)
+func (self Link) String() string {
+	return fmt.Sprint(self.url)
+}
 
-	queue <- "https://bost.ocks.org/mike/algorithms/"
+func (self Link) Valid() bool {
+	if self.depth >= MaxDepth {
+		return false
+	}
 
-	timer := time.NewTimer(time.Second * 5)
+	if len(self.text) == 0 {
+		return false
+	}
+	if len(self.url) == 0 || strings.Contains(strings.ToLower(self.url), "javascript") {
+		return false
+	}
 
-	<-timer.C
+	return true
+}
 
-	fmt.Printf("Enough\n")
+func (self HttpError) Error() string {
+	return self.original
+}
 
-	// printf out values in store
-	store_mutex.Lock()
-	fmt.Println(store)
-	store_mutex.Unlock()
+var MaxDepth = 2
+
+func LinkReader(resp *http.Response, depth int) []Link {
+	page := html.NewTokenizer(resp.Body)
+	links := []Link{}
+
+	var start *html.Token
+	var text string
+
+	for {
+		_ = page.Next()
+		token := page.Token()
+		if token.Type == html.ErrorToken {
+			break
+		}
+
+		if start != nil && token.Type == html.TextToken {
+			text = fmt.Sprintf("%s%s", text, token.Data)
+		}
+
+		if token.DataAtom == atom.A {
+			switch token.Type {
+			case html.StartTagToken:
+				if len(token.Attr) > 0 {
+					start = &token
+				}
+			case html.EndTagToken:
+				if start == nil {
+					fmt.Printf("Link End found without Start: %s", text)
+					continue
+				}
+				link := NewLink(*start, text, depth)
+				if link.Valid() {
+					links = append(links, link)
+					// prints links found
+					fmt.Printf("~> Link Found %v", link)
+				}
+
+				start = nil
+				text = ""
+			}
+		}
+	}
+
+	// For debugging 
+	// fmt.Print(links)
+	return links
+}
+
+func NewLink(tag html.Token, text string, depth int) Link {
+	link := Link{text: strings.TrimSpace(text), depth: depth}
+
+	for i := range tag.Attr {
+		if tag.Attr[i].Key == "href" {
+			link.url = strings.TrimSpace(tag.Attr[i].Val)
+		}
+	}
+	return link
+}
+
+func recurDownloader(url string, depth int) {
+	page, err := downloader(url)
+	if err != nil {
+		fmt.Print(err)
+		return
+	}
+	links := LinkReader(page, depth)
+
+	for _, link := range links {
+		fmt.Println(link)
+		if depth+1 < MaxDepth {
+			recurDownloader(link.url, depth+1)
+		}
+	}
+}
+
+func downloader(url string) (resp *http.Response, err error) {
+	fmt.Printf("Downloading %s", url)
+	resp, err = http.Get(url)
+	if err != nil {
+		fmt.Printf("Error: %s", err)
+		return
+	}
+
+	if resp.StatusCode > 299 {
+		err = HttpError{fmt.Sprintf("Error (%d): %s", resp.StatusCode, url)}
+		fmt.Print(err)
+		return
+	}
+	return
+
+}
+
+func main() {
+
+	if len(os.Args) < 2 {
+		fmt.Print("SH!T GOT REAL ~ I didn't get a url")
+	}
+
+	recurDownloader(os.Args[1], 0)
 
 }
