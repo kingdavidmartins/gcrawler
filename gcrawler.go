@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
@@ -86,7 +87,7 @@ func LinkReader(resp *http.Response, depth int) []Link {
 		}
 	}
 
-	// For debugging 
+	// For debugging
 	// fmt.Print(links)
 	return links
 }
